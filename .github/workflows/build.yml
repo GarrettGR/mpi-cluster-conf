@@ -25,7 +25,7 @@ jobs:
         run: |
           nix-build '<nixpkgs/nixos>' \
             -A config.system.build.isoImage \
-            -I nixos-config=.hosts/installer/default.nix
+            -I nixos-config=../../hosts/installer/default.nix
 
       - name: Get ISO Path
         id: get-iso
