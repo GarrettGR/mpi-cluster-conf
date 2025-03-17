@@ -1,243 +1,358 @@
-# NixOS MPI Cluster Setup
+# Modular NixOS HPC Cluster Flake
 
-This repository contains configuration and setup scripts for creating a small CUDA-aware MPI cluster using NixOS. 
+A highly modular NixOS flake for creating High Performance Computing (HPC) clusters with SLURM, OpenMPI, CUDA, and flexible storage options.
 
-## What is this?
+## Features
 
-This is a complete setup for creating a small computer cluster that can:
-- Run parallel programs using MPI (Message Passing Interface)
-- Use NVIDIA GPUs for computation (CUDA)
-- Share files between computers using NFS (Network File System)
-- Automatically configure itself using NixOS
+- **Modular design**: Easily swap components like storage systems
+- **CUDA-aware MPI**: Optimized for GPU computing with CUDA-aware OpenMPI
+- **Storage flexibility**: Support for NFS, BeeGFS, and Lustre
+- **User management**: Home Manager integration for user environment configuration
+- **Scalable**: Works with clusters of any size, from 2 nodes to hundreds
+- **Monitoring**: Prometheus, Grafana, and GPU metrics integrated
 
-The cluster consists of:
-- One manager node (the main computer that coordinates everything)
-- One or more worker nodes (computers that help with calculations)
+## Repository Structure
 
-## Prerequisites
+```
+.
+├── flake.nix              # Main flake entry point
+├── lib/                   # Utility functions
+│   └── default.nix        # Common utility functions
+├── modules/               # Modular configuration components
+│   ├── base/              # Base system configuration
+│   ├── hpc/               # HPC software and CUDA configuration
+│   ├── monitoring/        # Monitoring and metrics
+│   ├── networking/        # Network configuration
+│   ├── slurm/             # SLURM workload manager
+│   ├── storage/           # Storage systems (NFS, BeeGFS, etc.)
+│   └── users/             # User management with Home Manager
+└── examples/              # Example configurations
+```
 
-You'll need:
-- At least two computers with:
-  - Intel processors
-  - NVIDIA GPUs
-  - Netowrk interfaces (preferably ethernet ports or adapters)
-    - An ethernet switch or router to connect the computers
-    - Ethernet cables
-- USB drives (for installation)
-- Basic familiarity with using a terminal
+## Quick Start
 
-## Step-by-Step Setup Guide
+### Option 1: Use directly from GitHub
 
-### 1. Physical Setup
-
-1. Connect all computers to the same network switch/router using ethernet cables
-2. Make note of which computer will be your manager node (pick one!)
-3. Power on all computers
-
-### 2. Network Planning
-
-Before installation, you need to plan your network. Here's the default setup (modify these in `modules/nixos/networking.nix` if needed):
-
-- Manager node (node0):
-  - Cluster network: 10.0.0.1
-  - External network: 192.168.1.201
-
-- Worker node (node1):
-  - Cluster network: 10.0.0.2
-  - External network: 192.168.1.202
-
-You'll need to modify these addresses if:
-- Your local network uses a different scheme than 192.168.1.x
-- You're setting up more than one worker node
-- Your network administrator assigned you different addresses
-
-### 3. Installing NixOS
-
-On each computer:
-
-1. Download the NixOS 24.11 ISO from [nixos.org](https://nixos.org/download)
-2. Create a bootable USB:
-   - On Windows: Use Rufus or Etcher
-   - On Mac: Use Etcher
-   - On Linux: Use `dd` or Etcher
-3. Boot from the USB drive (you might need to press F12 during startup to select boot device)
-4. Once booted into NixOS live environment:
-   ```bash
-   # Connect to internet (if using WiFi)
-   sudo systemctl start wpa_supplicant
-   wpa_cli
-   > add_network
-   > set_network 0 ssid "your_wifi_name"
-   > set_network 0 psk "your_wifi_password"
-   > enable_network 0
-   > quit
-
-   # Download our setup script
-   curl -L https://raw.githubusercontent.com/[your-repo]/main/setup-cluster-node.sh -o setup.sh
-   chmod +x setup.sh
-
-   # Run the installation
-   # For manager node:
-   sudo ./setup.sh --role manager
-   # For worker node:
-   sudo ./setup.sh --role worker
-   ```
-
-5. Review the generated configuration and run:
-   ```bash
-   sudo nixos-install
-   ```
-
-6. When prompted, set a root password
-7. Reboot the computer
-
-### 4. Post-Installation Setup
-
-On the manager node:
-
-1. Login as root using the password you set
-2. Create the shared directories:
-   ```bash
-   mkdir -p /nfs/project
-   mkdir -p /nfs/scratch
-   chmod 777 /nfs/project /nfs/scratch
-   ```
-
-On each worker node:
-
-1. Login as root
-2. Verify connection to manager:
-   ```bash
-   ping node0
-   ```
-
-3. Test NFS mounts:
-   ```bash
-   ls /common/project
-   ls /common/scratch
-   ```
-
-### 5. Testing the Cluster
-
-1. Login to any node as mpiuser
-2. Create a test file:
-   ```bash
-   # Create a simple MPI program
-   cat > /common/project/hello.c << EOF
-   #include <mpi.h>
-   #include <stdio.h>
-
-   int main(int argc, char** argv) {
-       MPI_Init(&argc, &argv);
-
-       int world_size;
-       MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-
-       int world_rank;
-       MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-
-       char processor_name[MPI_MAX_PROCESSOR_NAME];
-       int name_len;
-       MPI_Get_processor_name(processor_name, &name_len);
-
-       printf("Hello from processor %s, rank %d out of %d processors\n",
-              processor_name, world_rank, world_size);
-
-       MPI_Finalize();
-       return 0;
-   }
-   EOF
-
-   # Compile
-   mpicc /common/project/hello.c -o /common/project/hello
-
-   # Run on both nodes
-   mpirun -np 2 --host node0,node1 /common/project/hello
-   ```
-
-## Customizing Your Setup
-
-### Network Configuration
-
-If you need to change network addresses, edit `modules/nixos/networking.nix` and modify:
+Create a configuration file for your cluster (e.g., `my-cluster.nix`):
 
 ```nix
-networking = {
-  hosts = {
-    "10.0.0.1" = ["node0"];
-    "10.0.0.2" = ["node1"];
-    # Add more nodes here if needed
+let
+  clusterFlake = import (fetchTarball "https://github.com/yourusername/nixos-hpc-cluster/archive/main.tar.gz");
+in clusterFlake.mkClusterFlake {
+  # Basic cluster configuration
+  controllerHostname = "controller";
+  controllerIP = "10.0.0.1";
+  
+  # Define worker nodes
+  workerNodes = [
+    { hostname = "worker1"; ip = "10.0.0.11"; hasGPU = true; cpus = 64; memoryMB = 196608; gpus = 4; }
+    { hostname = "worker2"; ip = "10.0.0.12"; hasGPU = true; cpus = 64; memoryMB = 196608; gpus = 4; }
+  ];
+  
+  # Storage configuration (defaults to NFS)
+  storageConfig = {
+    type = "nfs";  # Options: "nfs", "beegfs", "lustre", "local"
+    sharedMounts = [
+      { mountPoint = "/home"; exportPath = "/home"; }
+      { mountPoint = "/opt/shared"; exportPath = "/opt/shared"; }
+    ];
+  };
+  
+  # SSH keys for access
+  sshKeys = [
+    "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... user@example"
+  ];
+  
+  # Optional user configurations
+  users = [
+    {
+      name = "researcher";
+      groups = [ "users" ];
+      nodes = "all";
+      homeConfig = { pkgs, ... }: {
+        home.packages = with pkgs; [ python3 git ];
+      };
+    }
+  ];
+}
+```
+
+Build and deploy:
+
+```bash
+# For the controller
+nixos-rebuild switch --flake ./my-cluster.nix#controller
+
+# For worker nodes
+nixos-rebuild switch --flake ./my-cluster.nix#worker1
+```
+
+### Option 2: Include as a flake input
+
+In your `flake.nix`:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixos-hpc-cluster.url = "github:yourusername/nixos-hpc-cluster";
+  };
+
+  outputs = { self, nixpkgs, nixos-hpc-cluster, ... }: {
+    nixosConfigurations = nixos-hpc-cluster.mkClusterFlake {
+      controllerHostname = "controller";
+      controllerIP = "10.0.0.1";
+      workerNodes = [
+        { hostname = "worker1"; ip = "10.0.0.11"; hasGPU = true; cpus = 64; memoryMB = 196608; gpus = 4; }
+      ];
+      sshKeys = [ "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAA... user@example" ];
+    };
+  };
+}
+```
+
+## Module Configuration Options
+
+Each module can be customized independently:
+
+### Storage Options
+
+```nix
+storageConfig = {
+  # NFS configuration
+  type = "nfs";
+  sharedMounts = [
+    { mountPoint = "/home"; exportPath = "/home"; }
+    { mountPoint = "/opt/shared"; exportPath = "/opt/shared"; }
+  ];
+  exportOptions = "*(rw,sync,no_subtree_check,no_root_squash)";
+};
+
+# OR
+
+storageConfig = {
+  # BeeGFS configuration
+  type = "beegfs";
+  sharedMounts = [
+    { mountPoint = "/home"; beegfsDataTarget = "home"; }
+    { mountPoint = "/scratch"; beegfsDataTarget = "scratch"; }
+  ];
+  serverNodes = [ "worker1" ];  # Nodes that will run BeeGFS services
+  useRDMA = true;               # Enable RDMA transport
+  numTargets = 4;               # Number of storage targets
+};
+
+# OR
+
+storageConfig = {
+  # Lustre configuration
+  type = "lustre";
+  sharedMounts = [
+    { mountPoint = "/lustre"; lustreFilesystem = "lustre"; }
+  ];
+  serverNodes = [ "worker1" "worker2" ];
+  mgsDomain = "mgs@o2ib";
+};
+```
+
+### Networking Options
+
+```nix
+networkConfig = {
+  domain = "cluster.local";
+  subnet = "10.0.0";
+  netmask = "255.255.255.0";
+  defaultGateway = "10.0.0.1";
+  
+  # Optional
+  enableFirewall = true;
+  extraAllowedTCPPorts = [ 8080 9090 ];
+  
+  # InfiniBand support
+  enableInfiniband = true;
+  infinibandHardware = "mlx5_0";
+  
+  # Mellanox support
+  enableMellanox = true;
+};
+```
+
+### User Management with Home Manager
+
+```nix
+users = [
+  # Admin user on all nodes
+  {
+    name = "admin";
+    groups = [ "wheel" "networkmanager" ];
+    nodes = "all";  # Options: "all", "controller", "workers", or list of hostnames
+    homeConfig = { pkgs, ... }: {
+      home.packages = with pkgs; [ htop tmux vim ];
+    };
+  },
+  
+  # Researcher only on compute nodes
+  {
+    name = "researcher";
+    nodes = "workers";
+    homeConfig = { pkgs, ... }: {
+      home.packages = with pkgs; [ python3 tensorflow jupyter ];
+    };
+  }
+];
+```
+
+## Extending and Customizing
+
+### Adding Custom Modules
+
+You can add custom modules specific to nodes or applied to all nodes:
+
+```nix
+extraNodeModules = {
+  controller = { config, pkgs, ... }: {
+    # Configuration only for controller
+    services.custom-service.enable = true;
+  };
+  
+  worker1 = { config, pkgs, ... }: {
+    # Configuration only for worker1
+    hardware.custom-hardware.enable = true;
+  };
+};
+
+extraCommonModules = [
+  # Applied to all nodes
+  ({ config, pkgs, ... }: {
+    services.tailscale.enable = true;
+  })
+];
+```
+
+### Replacing Components
+
+The modular design makes it easy to replace components. For example, to switch from NFS to BeeGFS:
+
+```nix
+storageConfig = {
+  type = "beegfs";
+  sharedMounts = [
+    { mountPoint = "/home"; beegfsDataTarget = "home"; }
+    { mountPoint = "/scratch"; beegfsDataTarget = "scratch"; }
+  ];
+  serverNodes = [ "worker1" ];
+};
+```
+
+## Adding New Storage Backends
+
+The modular design makes it easy to add new storage backends. To add a new storage type:
+
+1. Edit `modules/storage/default.nix`
+2. Add your new implementation to the `storageImplementations` map:
+
+```nix
+storageImplementations = {
+  # Existing implementations...
+  
+  # Your new storage system
+  myCustomStorage = {
+    server = lib.mkIf isServer {
+      # Server-side configuration
+      services.myCustomStorage.server = {
+        enable = true;
+        # Other options...
+      };
+    };
+    
+    client = lib.mkIf (!isServer) {
+      # Client-side configuration
+      services.myCustomStorage.client = {
+        enable = true;
+        # Other options...
+      };
+    };
   };
 };
 ```
 
-### Adding More Worker Nodes
+3. Use it in your cluster configuration:
 
-1. Follow the installation steps for worker nodes
-2. Add the new node's IP and hostname to `modules/nixos/networking.nix`
-3. Update the hosts file on all nodes
+```nix
+storageConfig = {
+  type = "myCustomStorage";
+  # Your custom options...
+};
+```
 
-### CUDA Configuration
+## Post-Deployment Steps
 
-CUDA is pre-configured, but you can modify CUDA-related settings in `modules/nixos/nvidia.nix`.
+After deploying the configuration to all nodes:
 
-## Common Issues and Solutions
-
-### Network Issues
-
-If nodes can't see each other:
-1. Check physical connections
-2. Verify IP addresses match configuration
-3. Test with `ping`
-4. Check network interface names match your hardware
-
-### NFS Issues
-
-If NFS mounts fail:
-1. On manager node:
+1. **Generate a munge key** for SLURM authentication:
    ```bash
-   systemctl status nfs-server
-   ```
-2. On worker nodes:
-   ```bash
-   systemctl status nfs-client.target
+   # On the controller
+   nix run ./my-cluster.nix -- generate-munge-key
+   # Copy the generated munge.key to /etc/munge/munge.key on all nodes
    ```
 
-### MPI Issues
-
-If MPI jobs fail:
-1. Verify SSH works between nodes:
+2. **Restart munge and SLURM** on all nodes:
    ```bash
-   # From node0
-   ssh node1 hostname
-   ```
-2. Check MPI installation:
-   ```bash
-   mpirun --version
+   systemctl restart munge
+   systemctl restart slurmd  # On workers
+   systemctl restart slurmctld  # On controller
    ```
 
-## Getting Help
+3. **Verify the cluster** is working:
+   ```bash
+   # On the controller
+   sinfo
+   srun -N2 hostname
+   ```
 
-If you encounter issues:
-1. Check the [NixOS Manual](https://nixos.org/manual/nixos/stable/)
-2. Ask your instructor/TA
-3. Create an issue in this repository
+## Testing CUDA-aware MPI
 
-## Understanding the Code
+The flake includes a utility to generate a CUDA-aware MPI test program:
 
-The configuration is organized into:
-- `flake.nix`: Main configuration file
-- `modules/`: Shared configurations
-  - `nixos/`: System configurations
-  - `home-manager/`: User configurations
-- `hosts/`: Machine-specific configurations
-  - `manager/`: Manager node config
-  - `worker/`: Worker node config
+```bash
+# Generate the test program
+nix run ./my-cluster.nix -- test-cuda-mpi
+
+# Compile and run it
+mpicc -o cuda_mpi_test cuda_mpi_test.c -lcudart
+mpirun -np 4 --hostfile /etc/openmpi-hostfile ./cuda_mpi_test
+```
+
+## Monitoring
+
+The monitoring module sets up:
+
+1. **Prometheus** on the controller node for metrics collection
+2. **Grafana** for visualization (accessible at http://controller:3000)
+3. **Node Exporter** on all nodes for system metrics
+4. **NVIDIA GPU Exporter** on GPU nodes
+
+Default credentials for Grafana:
+- Username: `admin`
+- Password: `admin`
+
+## Known Limitations
+
+- Lustre support is somewhat limited as it requires external kernel modules
+- RDMA support requires specific hardware and may need additional configuration
+- The cluster assumes a single controller node (no HA configuration yet)
 
 ## Contributing
 
-Found a bug or want to improve something? Please:
-1. Fork the repository
-2. Create a branch
-3. Make your changes
-4. Submit a pull request
+Contributions are welcome! Areas that would particularly benefit from contributions:
+
+1. Support for high-availability SLURM configuration
+2. Additional storage backends (CephFS, GlusterFS, etc.)
+3. Integration with cloud providers for dynamic scaling
+4. Advanced networking configurations
+
+Please submit pull requests or open issues on GitHub.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
