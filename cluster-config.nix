@@ -1,52 +1,53 @@
 {
-  nodes = [
-    {
-      name = "node0";
-      ip = "10.204.139.32";
-      isMaster = true;
-      slots = 16;
-    }
-
-    {
-      name = "node1";
-      ip = "10.204.139.28";
-      isMaster = false;
-      slots = 8;
-    }
-    
-    {
-      name = "node2";
-      ip = "10.204.139.31";
-      isMaster = false;
-      slots = 8;
-    }
-
-    {
-      name = "node3"; 
-      ip = "10.204.139.19";
-      isMaster = false;
-      slots = 20;
-    }
-  ];
-
   networkConfig = {
     domain = "mpicluster.local";
     subnet = "10.204.139";
     netmask = "255.255.255.0";
   };
 
+  nodes = [
+    {
+      name = "node0";
+      ip = "10.204.139.32";
+      interface = "enp0s3";
+      isMaster = true;
+      slots = 16;
+    }
+    {
+      name = "node1";
+      ip = "10.204.139.28";
+      interface = "enp0s3";
+      isMaster = false;
+      slots = 8;
+    }
+    {
+      name = "node2";
+      ip = "10.204.139.31";
+      interface = "enp0s3";
+      isMaster = false;
+      slots = 8;
+    }
+    {
+      name = "node3";
+      ip = "10.204.139.19";
+      interface = "enp0s3";
+      isMaster = false;
+      slots = 20;
+    }
+  ];
+
   users = [
     {
       name = "garrettgr";
       description = "Garrett Gonzalez-Rivas";
-      shell = pkgs.zsh; 
-      # password = "password";
       hashedPassword = "$y$j9T$aJmECtPF9vQFrrcKekuiC.$GdBTLC1ly84/cIJik7AMhK2iy2lYHLJxvVe3ywu9wr8";
-      groups = [ "wheel" "networkmanager" ];
+      groups = ["wheel" "networkmanager"];
       sshKeys = [
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMdLb7Af2+G0PWH5RzMg7Q2Jxro9xusQ3WufUDgaj1E4"
       ];
-      homeConfig = { pkgs, ... }: {
+      shell = "zsh";
+      homeConfig = {pkgs, ...}: {
+        home.stateVersion = "24.11";
         home.packages = with pkgs; [
           neovim
           yazi
@@ -56,19 +57,34 @@
           eza
         ];
       };
-    },
+    }
+
     {
       name = "abigoz";
       description = "Abi Gail Goz";
       password = "password";
-      groups = [ "wheel" "networkmanager" ];
+      groups = ["wheel" "networkmanager"];
     }
   ];
 
-  extraPackages = pkgs: with pkgs; [
-    wget
-    tmux
-    htop
-    vim
+  extraPackages = [
+    "wget"
+    "tmux"
+    "htop"
+    "vim"
   ];
+
+  nfsConfig = {
+    exports = [
+      {
+        directory = "/home";
+        options = "rw,sync,no_subtree_check,no_root_squash,insecure";
+      }
+
+      {
+        directory = "/shared";
+        options = "rw,sync,no_subtree_check,no_root_squash,insecure";
+      }
+    ];
+  };
 }

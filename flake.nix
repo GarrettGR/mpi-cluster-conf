@@ -1,5 +1,5 @@
 {
-  description = "Simple CUDA-aware MPI Cluster for Education";
+  description = "CUDA-aware MPI Cluster for Education and Research";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -14,34 +14,17 @@
     nixpkgs,
     home-manager,
   }: let
+    loadConfig = configPath:
+      if builtins.pathExists configPath
+      then import configPath
+      else abort "Error: Configuration file ${toString configPath} not found!";
+
     clusterConfigPath = ./cluster-config.nix;
-    clusterConfig = import clusterConfigPath; # TODO: print an error if the file isn't found??
+    clusterConfig = loadConfig clusterConfigPath;
 
     mkMpiCluster = clusterConfig: let
-      hostName = clusterConfig.hostName or "mpi-node";
-      mainNode = clusterConfig.mainNode or "mpi-main";
-      mainNodeIP = clusterConfig.mainNodeIP or "192.168.1.10";
-      nodes =
-        clusterConfig.nodes
-        or [
-          {
-            name = "mpi-node0";
-            ip = "192.168.1.10";
-            isMaster = true;
-          }
-          {
-            name = "mpi-node1";
-            ip = "192.168.1.11";
-            isMaster = false;
-          }
-          {
-            name = "mpi-node2";
-            ip = "192.168.1.12";
-            isMaster = false;
-          }
-        ];
-      users = clusterConfig.users or [];
-      extraPackages = clusterConfig.extraPackages or [];
+      lib = nixpkgs.lib;
+
       networkConfig =
         clusterConfig.networkConfig
         or {
@@ -49,7 +32,48 @@
           subnet = "192.168.1";
           netmask = "255.255.255.0";
         };
-      sshKeys = clusterConfig.sshKeys or [];
+
+      nodes =
+        clusterConfig.nodes
+        or [
+          {
+            name = "mpi-node0";
+            ip = "192.168.1.10";
+            interface = "enp0s3";
+            isMaster = true;
+            slots = 4;
+          }
+          {
+            name = "mpi-node1";
+            ip = "192.168.1.11";
+            interface = "enp0s3";
+            isMaster = false;
+            slots = 4;
+          }
+        ];
+
+      users = clusterConfig.users or [];
+
+      rawExtraPackages = clusterConfig.extraPackages or [];
+      extraPackages = pkgs:
+        if builtins.isList rawExtraPackages && (builtins.length rawExtraPackages == 0 || builtins.isString (builtins.head rawExtraPackages))
+        then builtins.map (name: pkgs.${name}) rawExtraPackages
+        else rawExtraPackages;
+
+      nfsConfig =
+        clusterConfig.nfsConfig
+        or {
+          exports = [
+            {
+              directory = "/home";
+              options = "rw,sync,no_subtree_check,no_root_squash,insecure";
+            }
+            {
+              directory = "/shared";
+              options = "rw,sync,no_subtree_check,no_root_squash,insecure";
+            }
+          ];
+        };
 
       masterNode = builtins.head (builtins.filter (n: n.isMaster) nodes);
 
@@ -63,24 +87,31 @@
         lib,
         ...
       }: {
-        # NOTE: is this the right way to do this ?? Will this be the node-specific hardware-configuration ??
-        # imports = [ /etc/nixos/hardware-configuration.nix ];
-
         boot.loader.systemd-boot.enable = true;
         boot.loader.efi.canTouchEfiVariables = true;
 
-        networking = {
-          networkmanager.enable = true;
-          firewall.enable = false; # NOTE: Disable firewall for simplicity
-          extraHosts = hostEntries;
+        fileSystems."/" = lib.mkDefault {
+          #NOTE: uhhhh... is this right?
+          device = "/dev/disk/by-label/nixos";
+          fsType = "ext4";
         };
 
-        systemd.sysusers.enable = false;
+        fileSystems."/boot" = lib.mkDefault {
+          #NOTE: uhhhh... is this right?
+          device = "/dev/disk/by-label/boot";
+          fsType = "vfat";
+        };
+
+        networking = {
+          networkmanager.enable = true;
+          firewall.enable = false; # NOTE: disable firewall for simplicity
+          extraHosts = hostEntries;
+          nameservers = ["1.1.1.1" "8.8.8.8"];
+        };
 
         users = {
           mutableUsers = false;
           users = lib.mkMerge [
-            # User-provided users
             (lib.mkIf (users != []) (
               builtins.listToAttrs (
                 builtins.map (user: {
@@ -90,15 +121,19 @@
                     extraGroups = user.groups or ["wheel" "networkmanager"];
                     hashedPassword = user.hashedPassword or null;
                     password = user.password or null;
-                    openssh.authorizedKeys.keys = user.sshKeys or sshKeys;
                     description = user.description or null;
+                    shell =
+                      if user.shell or null != null
+                      then pkgs.${user.shell}
+                      else pkgs.bash;
+                    openssh.authorizedKeys.keys = user.sshKeys or [];
                   };
                 })
                 users
               )
             ))
 
-            # Default student user if no users provided
+            #NOTE: default student user if no users provided
             (lib.mkIf (users == []) {
               student = {
                 isNormalUser = true;
@@ -110,10 +145,11 @@
           ];
         };
 
-        # NOTE: Enable sudo without password for simplicity
-        security.sudo.wheelNeedsPassword = false;
+        security.sudo.wheelNeedsPassword = false; #FIXME: I really should change this...
+
+        programs.zsh.enable = true;
+
         services = {
-          tailscale.enable = true;
           openssh = {
             enable = true;
             settings = {
@@ -121,23 +157,27 @@
               PasswordAuthentication = true;
             };
           };
+
+          tailscale.enable = true;
         };
 
         environment.systemPackages = with pkgs;
           [
-            # Basic utilities
-            vim
-            wget
             git
+            curl
+            wget
+            vim
             htop
             tmux
-            screen
 
-            # CUDA
+            # CUDA tools
             cudaPackages.cudatoolkit
             cudaPackages.cuda_cudart
+
+            # OpenMPI with CUDA support
+            openmpi
           ]
-          ++ extraPackages pkgs;
+          ++ (extraPackages pkgs);
 
         environment.variables = {
           X_TLS = "rc,sm,cuda_copy,cuda_ipc,gdr_copy";
@@ -152,7 +192,6 @@
         hardware.nvidia.package = config.boot.kernelPackages.nvidiaPackages.stable;
         hardware.nvidia.modesetting.enable = true;
 
-        # Create hostfile for OpenMPI
         environment.etc."openmpi-hostfile".text = builtins.concatStringsSep "\n" (
           builtins.map (node: "${node.name} slots=${toString (node.slots or 1)}") nodes
         );
@@ -173,15 +212,15 @@
         home-manager.useUserPackages = true;
 
         home-manager.users = lib.mkMerge [
-          # User-provided home configurations
           (lib.mkIf (users != []) (
             builtins.listToAttrs (
               builtins.map (user: {
                 name = user.name;
                 value =
-                  user.homeConfig
-                  or {
-                    home.stateVersion = "24.11";
+                  if user ? homeConfig
+                  then user.homeConfig
+                  else {
+                    home.stateVersion = config.system.stateVersion;
 
                     programs.bash = {
                       enable = true;
@@ -195,29 +234,16 @@
                         export CUDA_HOME=${pkgs.cudaPackages.cudatoolkit}
                       '';
                     };
-
-                    programs.vim = {
-                      enable = true;
-                      settings = {
-                        number = true;
-                      };
-                      extraConfig = ''
-                        syntax on
-                        set expandtab
-                        set tabstop=4
-                        set shiftwidth=4
-                      '';
-                    };
                   };
               })
               users
             )
           ))
 
-          # Default student home configuration if no users provided
+          #NOTE: default student home configuration if no users provided
           (lib.mkIf (users == []) {
             student = {
-              home.stateVersion = "24.11";
+              home.stateVersion = config.system.stateVersion;
 
               programs.bash = {
                 enable = true;
@@ -231,26 +257,12 @@
                   export CUDA_HOME=${pkgs.cudaPackages.cudatoolkit}
                 '';
               };
-
-              programs.vim = {
-                enable = true;
-                settings = {
-                  number = true;
-                };
-                extraConfig = ''
-                  syntax on
-                  set expandtab
-                  set tabstop=4
-                  set shiftwidth=4
-                '';
-              };
             };
           })
         ];
 
         time.timeZone = "America/New_York";
         i18n.defaultLocale = "en_US.UTF-8";
-
         system.stateVersion = "24.11";
       };
 
@@ -261,7 +273,7 @@
         ...
       }: {
         networking.hostName = masterNode.name;
-        networking.interfaces.enp0s3.ipv4.addresses = [
+        networking.interfaces.${masterNode.interface or "enp0s3"}.ipv4.addresses = [
           {
             address = masterNode.ip;
             prefixLength = 24;
@@ -274,10 +286,14 @@
           statdPort = 4000;
           lockdPort = 4001;
           mountdPort = 4002;
-          exports = ''
-            /home 192.168.1.0/24(rw,sync,no_subtree_check,no_root_squash,insecure)
-            /shared 192.168.1.0/24(rw,sync,no_subtree_check,no_root_squash,insecure)
-          '';
+
+          exports = builtins.concatStringsSep "\n" (
+            builtins.map (
+              export: "${export.directory} ${networkConfig.subnet}.0/24(${export.options})"
+            )
+            nfsConfig.exports
+          );
+
           extraNfsdConfig = ''
             udp=y
             vers3=on
@@ -305,7 +321,7 @@
         ...
       }: {
         networking.hostName = node.name;
-        networking.interfaces.enp0s3.ipv4.addresses = [
+        networking.interfaces.${node.interface or "enp0s3"}.ipv4.addresses = [
           {
             address = node.ip;
             prefixLength = 24;
@@ -313,40 +329,34 @@
         ];
         networking.defaultGateway = masterNode.ip;
 
-        fileSystems."/home" = {
-          device = "${masterNode.ip}:/home";
-          fsType = "nfs";
-          options = [
-            "noatime"
-            "soft"
-            "timeo=900"
-            "retrans=5"
-            "x-systemd.automount"
-            "x-systemd.idle-timeout=1800"
-            "x-systemd.device-timeout=5s"
-            "x-systemd.mount-timeout=5s"
-          ];
-        };
-
-        fileSystems."/shared" = {
-          device = "${masterNode.ip}:/shared";
-          fsType = "nfs";
-          options = [
-            "noatime"
-            "soft"
-            "timeo=900"
-            "retrans=5"
-            "x-systemd.automount"
-            "x-systemd.idle-timeout=1800"
-            "x-systemd.device-timeout=5s"
-            "x-systemd.mount-timeout=5s"
-          ];
-        };
-
-        systemd.tmpfiles.rules = [
-          "d /home 0755 root root -"
-          "d /shared 0777 root root -"
+        fileSystems = lib.mkMerge [
+          (lib.listToAttrs (
+            builtins.map (export: {
+              name = export.directory;
+              value = {
+                device = "${masterNode.ip}:${export.directory}";
+                fsType = "nfs";
+                options = [
+                  "noatime"
+                  "soft"
+                  "timeo=900"
+                  "retrans=5"
+                  "x-systemd.automount"
+                  "x-systemd.idle-timeout=1800"
+                  "x-systemd.device-timeout=5s"
+                  "x-systemd.mount-timeout=5s"
+                ];
+              };
+            })
+            nfsConfig.exports
+          ))
         ];
+
+        systemd.tmpfiles.rules =
+          builtins.map (
+            export: "d ${export.directory} 0755 root root -"
+          )
+          nfsConfig.exports;
       };
 
       nodeConfigurations = builtins.listToAttrs (
@@ -375,5 +385,9 @@
     lib = {
       inherit mkMpiCluster;
     };
+
+    checks =
+      builtins.mapAttrs (name: value: value.config.system.build.toplevel)
+      (mkMpiCluster clusterConfig);
   };
 }
