@@ -9,28 +9,28 @@
     {
       name = "node0";
       ip = "10.204.139.32";
-      interface = "enp0s3";
+      interface = "enp0s13f0u3";
       isMaster = true;
       slots = 16;
     }
     {
       name = "node1";
       ip = "10.204.139.28";
-      interface = "enp0s3";
+      interface = "enp0s20f0u2";
       isMaster = false;
       slots = 8;
     }
     {
       name = "node2";
       ip = "10.204.139.31";
-      interface = "enp0s3";
+      interface = "enp0s20f0u2";
       isMaster = false;
       slots = 8;
     }
     {
       name = "node3";
       ip = "10.204.139.19";
-      interface = "enp0s3";
+      interface = "enp86s0u1c2";
       isMaster = false;
       slots = 20;
     }
