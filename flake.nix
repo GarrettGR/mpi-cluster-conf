@@ -90,6 +90,8 @@
         boot.loader.systemd-boot.enable = true;
         boot.loader.efi.canTouchEfiVariables = true;
 
+        nixpkgs.config.allowUnfree = true;
+
         fileSystems."/" = lib.mkDefault {
           #NOTE: uhhhh... is this right?
           device = "/dev/disk/by-label/nixos";
