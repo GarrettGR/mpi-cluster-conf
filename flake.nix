@@ -190,7 +190,7 @@
           OMPI_MCA_osc = "ucx";
         };
 
-        hardware.opengl.enable = true;
+        hardware.graphics.enable = true;
         hardware.nvidia.package = config.boot.kernelPackages.nvidiaPackages.stable;
         hardware.nvidia.modesetting.enable = true;
 
